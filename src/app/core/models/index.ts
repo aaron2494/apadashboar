@@ -1,4 +1,6 @@
 export type EstadoProyecto = 'EN_PROGRESO' | 'PAUSADO' | 'COMPLETADO' | 'CANCELADO';
+export type TipoEntregable = 'figma' | 'drive' | 'notion' | 'github' | 'link';
+export type CategoriaHora  = 'diseno' | 'desarrollo' | 'redes' | 'ads' | 'reunion' | 'otro';
 
 export interface Cliente {
   id: string;
@@ -11,6 +13,12 @@ export interface Cliente {
   created_at: string;
 }
 
+export interface ItemPresupuesto {
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+}
+
 export interface Proyecto {
   id: string;
   nombre: string;
@@ -21,8 +29,10 @@ export interface Proyecto {
   monto_cobrado: number;
   fecha_inicio: string;
   fecha_entrega?: string;
+  token_publico?: string;
+  items_presupuesto?: ItemPresupuesto[];
   created_at: string;
-  clientes?: Pick<Cliente, 'nombre' | 'empresa'>;
+  clientes?: Pick<Cliente, 'nombre' | 'empresa' | 'email' | 'telefono'>;
 }
 
 export interface Pago {
@@ -32,7 +42,39 @@ export interface Pago {
   fecha: string;
   nota?: string;
   created_at: string;
-  proyectos?: Pick<Proyecto, 'nombre'>;
+}
+
+export interface Entregable {
+  id: string;
+  proyecto_id: string;
+  nombre: string;
+  url: string;
+  tipo: TipoEntregable;
+  created_at: string;
+}
+
+export interface Hora {
+  id: string;
+  proyecto_id: string;
+  categoria: CategoriaHora;
+  cantidad: number;
+  descripcion?: string;
+  fecha: string;
+  created_at: string;
+}
+
+export interface VistaPublicaProyecto {
+  id: string;
+  nombre: string;
+  descripcion?: string;
+  estado: EstadoProyecto;
+  presupuesto: number;
+  monto_cobrado: number;
+  fecha_inicio: string;
+  fecha_entrega?: string;
+  clientes?: Pick<Cliente, 'nombre' | 'empresa'>;
+  pagos?: Pick<Pago, 'monto' | 'fecha' | 'nota'>[];
+  entregables?: Pick<Entregable, 'nombre' | 'url' | 'tipo'>[];
 }
 
 export interface DashboardStats {

@@ -13,7 +13,7 @@ export class ProyectoService {
     this.loading.set(true);
     const { data, error } = await this.sb
       .from('proyectos')
-      .select('*, clientes(nombre, empresa)')
+      .select('*, clientes(nombre, empresa, email, telefono)')
       .order('created_at', { ascending: false });
     this.loading.set(false);
     if (error) throw error;
@@ -24,7 +24,7 @@ export class ProyectoService {
     this.loading.set(true);
     const { data, error } = await this.sb
       .from('proyectos')
-      .select('*, clientes(nombre, empresa)')
+      .select('*, clientes(nombre, empresa, email, telefono)')
       .eq('cliente_id', clienteId)
       .order('created_at', { ascending: false });
     this.loading.set(false);
@@ -32,11 +32,21 @@ export class ProyectoService {
     this.proyectos.set(data ?? []);
   }
 
+  async loadByToken(token: string) {
+    const { data, error } = await this.sb
+      .from('proyectos')
+      .select('*, clientes(nombre, empresa, email, telefono)')
+      .eq('token_publico', token)
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
   async create(body: Partial<Proyecto>) {
     const { data, error } = await this.sb
       .from('proyectos')
       .insert(body)
-      .select('*, clientes(nombre, empresa)')
+      .select('*, clientes(nombre, empresa, email, telefono)')
       .single();
     if (error) throw error;
     this.proyectos.update(list => [data, ...list]);
@@ -48,7 +58,7 @@ export class ProyectoService {
       .from('proyectos')
       .update(body)
       .eq('id', id)
-      .select('*, clientes(nombre, empresa)')
+      .select('*, clientes(nombre, empresa, email, telefono)')
       .single();
     if (error) throw error;
     this.proyectos.update(list => list.map(p => p.id === id ? data : p));
