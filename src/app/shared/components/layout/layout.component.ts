@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive, Router } from '@angular/router';
 import { SupabaseService } from '../../../core/services/supabase.service';
 
@@ -39,6 +39,15 @@ import { SupabaseService } from '../../../core/services/supabase.service';
 
         <div class="rail-bottom">
           <div class="rail-line"></div>
+          <a routerLink="/perfil" routerLinkActive="is-active" class="nav-link perfil-link">
+            <span class="nav-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </span>
+            <span class="nav-label">Mi perfil</span>
+          </a>
           <button class="sign-out" (click)="logout()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -56,112 +65,66 @@ import { SupabaseService } from '../../../core/services/supabase.service';
     </div>
   `,
   styles: [`
-    .shell {
-      display: flex;
-      min-height: 100vh;
-    }
+    .shell { display: flex; min-height: 100vh; }
 
-    /* ── Rail ─────────────────────────────────── */
     .rail {
-      width: 210px;
-      flex-shrink: 0;
-      background: var(--bg-1);
-      border-right: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      height: 100vh;
+      width: 210px; flex-shrink: 0;
+      background: var(--bg-1); border-right: 1px solid var(--line);
+      display: flex; flex-direction: column; justify-content: space-between;
+      position: sticky; top: 0; height: 100vh;
     }
+    .rail-top { display: flex; flex-direction: column; }
 
-    .rail-top { display: flex; flex-direction: column; gap: 0; }
-
-    /* Logo */
     .logo {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      display: flex; align-items: center; gap: 10px;
       padding: 20px 16px 18px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 8px;
+      border-bottom: 1px solid var(--line); margin-bottom: 8px;
     }
     .logo-mark {
-      width: 34px;
-      height: 34px;
-      border-radius: 9px;
-      background: var(--bg-3);
-      border: 1px solid var(--line-2);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      width: 34px; height: 34px; border-radius: 9px;
+      background: var(--bg-3); border: 1px solid var(--line-2);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .logo-name { display: block; font-size: 13px; font-weight: 600; color: var(--ink); letter-spacing: -0.02em; }
     .logo-tag  { display: block; font-size: 10px; color: var(--ink-3); font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 1px; }
 
-    /* Nav */
     .nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; }
 
     .nav-link {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      color: var(--ink-3);
-      font-size: 13.5px;
-      font-weight: 400;
-      transition: color 0.15s, background 0.15s;
-      position: relative;
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 10px; border-radius: 8px;
+      color: var(--ink-3); font-size: 13.5px; font-weight: 400;
+      text-decoration: none;
+      transition: color 0.15s, background 0.15s; position: relative;
     }
     .nav-link:hover { color: var(--ink-2); background: var(--line); }
-    .nav-link.is-active {
-      color: var(--ink);
-      background: rgba(124,106,247,0.12);
-    }
+    .nav-link.is-active { color: var(--ink); background: rgba(124,106,247,0.12); }
     .nav-link.is-active::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 2px;
-      height: 16px;
-      background: var(--accent);
-      border-radius: 1px;
+      content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+      width: 2px; height: 16px; background: var(--accent); border-radius: 1px;
     }
     .nav-icon { display: flex; opacity: 0.7; flex-shrink: 0; }
     .nav-link.is-active .nav-icon { opacity: 1; }
     .nav-label { flex: 1; }
 
-    /* Rail bottom */
-    .rail-bottom { padding: 12px 8px 16px; }
-    .rail-line { height: 1px; background: var(--line); margin-bottom: 12px; }
+    .rail-bottom { padding: 8px 8px 16px; }
+    .rail-line { height: 1px; background: var(--line); margin-bottom: 8px; }
+
+    .perfil-link { margin-bottom: 2px; }
 
     .sign-out {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: none;
-      border: none;
-      color: var(--ink-3);
-      font-size: 13px;
-      cursor: pointer;
-      transition: all 0.15s;
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 8px 10px; border-radius: 8px;
+      background: none; border: none; color: var(--ink-3);
+      font-size: 13px; cursor: pointer; transition: all 0.15s;
     }
     .sign-out:hover { color: var(--red); background: var(--red-bg); }
 
-    /* ── Stage ────────────────────────────────── */
-    .stage {
-      flex: 1;
-      min-width: 0;
-      padding: 32px 36px;
-      overflow-y: auto;
-    }
+    .stage { flex: 1; min-width: 0; padding: 32px 36px; overflow-y: auto; background: #f8fafc; }
+
+    /* Override stage bg para dark */
+    :host { --stage-bg: #0d0d14; }
+    .stage { background: var(--bg); }
   `]
 })
 export class LayoutComponent {
@@ -169,26 +132,9 @@ export class LayoutComponent {
   private router = inject(Router);
 
   navItems = [
-    {
-      path: '/dashboard', label: 'Dashboard', exact: true,
-      icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-        <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-      </svg>`
-    },
-    {
-      path: '/clientes', label: 'Clientes', exact: false,
-      icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
-        <path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/>
-      </svg>`
-    },
-    {
-      path: '/proyectos', label: 'Proyectos', exact: false,
-      icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-      </svg>`
-    },
+    { path: '/dashboard', label: 'Dashboard', exact: true, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>` },
+    { path: '/clientes',  label: 'Clientes',  exact: false, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>` },
+    { path: '/proyectos', label: 'Proyectos', exact: false, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
   ];
 
   async logout() {

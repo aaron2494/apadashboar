@@ -31,6 +31,7 @@ export interface Proyecto {
   fecha_entrega?: string;
   token_publico?: string;
   items_presupuesto?: ItemPresupuesto[];
+  archivado: boolean;
   created_at: string;
   clientes?: Pick<Cliente, 'nombre' | 'empresa' | 'email' | 'telefono'>;
 }
@@ -83,4 +84,13 @@ export interface DashboardStats {
   proyectosActivos: number;
   cobrosPendientes: number;
   porcentajeCobrado: number;
+}
+
+// Para notificaciones de cobros vencidos
+export interface AlertaCobro {
+  proyectoId: string;
+  proyectoNombre: string;
+  clienteEmpresa: string;
+  pendiente: number;
+  diasDesdeUltimoPago: number;
 }

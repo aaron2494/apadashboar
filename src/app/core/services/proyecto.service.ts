@@ -14,18 +14,18 @@ export class ProyectoService {
     const { data, error } = await this.sb
       .from('proyectos')
       .select('*, clientes(nombre, empresa, email, telefono)')
+      .eq('archivado', false)           // solo no archivados por defecto
       .order('created_at', { ascending: false });
     this.loading.set(false);
     if (error) throw error;
     this.proyectos.set(data ?? []);
   }
 
-  async loadByCliente(clienteId: string) {
+  async loadConArchivados() {
     this.loading.set(true);
     const { data, error } = await this.sb
       .from('proyectos')
       .select('*, clientes(nombre, empresa, email, telefono)')
-      .eq('cliente_id', clienteId)
       .order('created_at', { ascending: false });
     this.loading.set(false);
     if (error) throw error;
@@ -45,7 +45,7 @@ export class ProyectoService {
   async create(body: Partial<Proyecto>) {
     const { data, error } = await this.sb
       .from('proyectos')
-      .insert(body)
+      .insert({ ...body, archivado: false })
       .select('*, clientes(nombre, empresa, email, telefono)')
       .single();
     if (error) throw error;
@@ -69,7 +69,24 @@ export class ProyectoService {
     return this.update(id, { estado });
   }
 
-  async delete(id: string) {
+  // Archivar: oculta el proyecto de la lista principal, NO borra datos
+  async archivar(id: string) {
+    const { error } = await this.sb
+      .from('proyectos')
+      .update({ archivado: true })
+      .eq('id', id);
+    if (error) throw error;
+    this.proyectos.update(list => list.filter(p => p.id !== id));
+  }
+
+  // Desarchivar: vuelve a ser visible
+  async desarchivar(id: string) {
+    await this.update(id, { archivado: false });
+    this.proyectos.update(list => list.filter(p => p.id !== id));
+  }
+
+  // Borrar permanentemente — solo para proyectos archivados
+  async deletePermanente(id: string) {
     const { error } = await this.sb.from('proyectos').delete().eq('id', id);
     if (error) throw error;
     this.proyectos.update(list => list.filter(p => p.id !== id));
