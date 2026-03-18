@@ -33,13 +33,13 @@ const META: Record<EstadoProyecto, { label: string; color: string; bg: string }>
             </svg>
             {{ mostrarArchivados() ? 'Ocultar archivados' : 'Ver archivados' }}
           </button>
-          <button class="btn-export" (click)="exportarCSV()">
+          <button class="btn-export" (click)="exportarXLSX()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            Exportar CSV
+            Exportar Excel
           </button>
           <button class="cta" (click)="openModal()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -503,32 +503,86 @@ export class ProyectosComponent implements OnInit {
     await this.svc.deletePermanente(id);
   }
 
-  // Exportar a CSV — todo en el cliente, sin servidor
-  exportarCSV() {
-    const cols = ['Proyecto','Cliente','Estado','Presupuesto','Cobrado','Pendiente','Fecha entrega'];
-    const rows = this.svc.proyectos()
-      .filter(p => !p.archivado)
-      .map(p => [
-        p.nombre,
-        p.clientes?.empresa ?? '',
-        META[p.estado].label,
-        p.presupuesto,
-        p.monto_cobrado,
-        p.presupuesto - p.monto_cobrado,
-        p.fecha_entrega ?? '',
-      ]);
+  // Exportar a XLSX con SheetJS — columnas, anchos y header con color
+  exportarXLSX() {
+    // SheetJS se carga desde index.html como variable global
+    const XLSX = (window as any)['XLSX'];
+    if (!XLSX) { alert('Error al cargar SheetJS. Recargá la página.'); return; }
 
-    const csv = [cols, ...rows]
-      .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
+    const proyectos = this.svc.proyectos().filter(p => !p.archivado);
 
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `proyectos-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Filas de datos — numeros como numeros, no como strings
+    const rows = proyectos.map(p => ({
+      'Proyecto':      p.nombre,
+      'Cliente':       p.clientes?.empresa ?? '',
+      'Estado':        META[p.estado].label,
+      'Presupuesto':   p.presupuesto,
+      'Cobrado':       p.monto_cobrado,
+      'Pendiente':     p.presupuesto - p.monto_cobrado,
+      'Avance %':      this.pct(p),
+      'Fecha entrega': p.fecha_entrega ?? '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    // Anchos de columna en caracteres
+    ws['!cols'] = [
+      { wch: 32 }, // Proyecto
+      { wch: 22 }, // Cliente
+      { wch: 14 }, // Estado
+      { wch: 16 }, // Presupuesto
+      { wch: 16 }, // Cobrado
+      { wch: 16 }, // Pendiente
+      { wch: 10 }, // Avance %
+      { wch: 14 }, // Fecha entrega
+    ];
+
+    // Estilo del header — fondo oscuro, texto blanco, negrita
+    const headerStyle = {
+      font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+      fill:      { fgColor: { rgb: '1D3461' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: {
+        bottom: { style: 'medium', color: { rgb: '4472C4' } }
+      }
+    };
+
+    // Estilo para celdas de moneda
+    const moneyFmt = '"$"#,##0';
+
+    // Aplicar estilos a cada celda del header (fila 1)
+    ['A','B','C','D','E','F','G','H'].forEach(col => {
+      const cell = ws[col + '1'];
+      if (cell) cell.s = headerStyle;
+    });
+
+    // Formato de moneda para columnas D, E, F (Presupuesto, Cobrado, Pendiente)
+    for (let i = 2; i <= rows.length + 1; i++) {
+      ['D','E','F'].forEach(col => {
+        const cell = ws[col + i];
+        if (cell) cell.z = moneyFmt;
+      });
+      // Formato % para columna G
+      const cellG = ws['G' + i];
+      if (cellG) cellG.z = '0"%"';
+
+      // Alternar color de filas
+      const rowFill = i % 2 === 0
+        ? { fgColor: { rgb: 'EBF0F8' } }
+        : { fgColor: { rgb: 'FFFFFF' } };
+      ['A','B','C','D','E','F','G','H'].forEach(col => {
+        const cell = ws[col + i];
+        if (cell) cell.s = { fill: rowFill, alignment: { vertical: 'center' } };
+      });
+    }
+
+    // Crear el workbook y agregar la hoja
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Proyectos');
+
+    // Descargar
+    const fecha = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `proyectos-apa-${fecha}.xlsx`);
   }
 
   estaVencido(p: Proyecto): boolean {
