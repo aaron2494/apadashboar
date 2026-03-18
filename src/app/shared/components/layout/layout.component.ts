@@ -1,11 +1,12 @@
 import { Component, inject } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive, Router } from '@angular/router';
+import { ToastsComponent } from '../toasts/toasts.component';
 import { SupabaseService } from '../../../core/services/supabase.service';
 
 @Component({
   selector: 'app-layout',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ToastsComponent],
   template: `
     <div class="shell">
       <aside class="rail">
@@ -28,7 +29,7 @@ import { SupabaseService } from '../../../core/services/supabase.service';
           <nav class="nav">
             @for (item of navItems; track item.path) {
               <a [routerLink]="item.path" routerLinkActive="is-active"
-                 [routerLinkActiveOptions]="{exact: item.exact ?? false}"
+                 [routerLinkActiveOptions]="{exact: !!item.exact}"
                  class="nav-link">
                 <span class="nav-icon" [innerHTML]="item.icon"></span>
                 <span class="nav-label">{{ item.label }}</span>
@@ -62,6 +63,7 @@ import { SupabaseService } from '../../../core/services/supabase.service';
       <div class="stage">
         <router-outlet />
       </div>
+      <app-toasts />
     </div>
   `,
   styles: [`

@@ -2,6 +2,13 @@ import { Injectable, inject, signal } from '@angular/core';
 import { SupabaseService } from './supabase.service';
 import { Proyecto, EstadoProyecto } from '../models';
 
+const ESTADO_LABEL: Record<EstadoProyecto, string> = {
+  EN_PROGRESO: 'En progreso',
+  PAUSADO:     'Pausado',
+  COMPLETADO:  'Completado',
+  CANCELADO:   'Cancelado',
+};
+
 @Injectable({ providedIn: 'root' })
 export class ProyectoService {
   private sb = inject(SupabaseService).client;
@@ -9,12 +16,37 @@ export class ProyectoService {
   readonly proyectos = signal<Proyecto[]>([]);
   readonly loading   = signal(false);
 
+  // Helper para obtener email del usuario actual
+  private async getUserEmail(): Promise<string> {
+    const { data: { user } } = await this.sb.auth.getUser();
+    return user?.email ?? 'sistema';
+  }
+
+  // Helper para registrar actividad sin romper si falla
+  private async logActividad(
+    proyectoId: string,
+    tipo: string,
+    descripcion: string,
+    metadata: Record<string, any> = {}
+  ) {
+    try {
+      const email = await this.getUserEmail();
+      await this.sb.from('actividad').insert({
+        proyecto_id:   proyectoId,
+        tipo,
+        descripcion,
+        metadata,
+        usuario_email: email,
+      });
+    } catch { /* silencioso — la actividad no es critica */ }
+  }
+
   async loadAll() {
     this.loading.set(true);
     const { data, error } = await this.sb
       .from('proyectos')
       .select('*, clientes(nombre, empresa, email, telefono)')
-      .eq('archivado', false)           // solo no archivados por defecto
+      .eq('archivado', false)
       .order('created_at', { ascending: false });
     this.loading.set(false);
     if (error) throw error;
@@ -50,6 +82,8 @@ export class ProyectoService {
       .single();
     if (error) throw error;
     this.proyectos.update(list => [data, ...list]);
+    // Registrar actividad
+    await this.logActividad(data.id, 'proyecto_creado', 'Proyecto creado', { nombre: data.nombre });
     return data;
   }
 
@@ -66,26 +100,29 @@ export class ProyectoService {
   }
 
   async updateEstado(id: string, estado: EstadoProyecto) {
-    return this.update(id, { estado });
+    const anterior = this.proyectos().find(p => p.id === id)?.estado;
+    const data = await this.update(id, { estado });
+    await this.logActividad(id, 'estado_cambio',
+      `Estado cambiado a ${ESTADO_LABEL[estado]}`,
+      { estado_anterior: anterior, estado_nuevo: estado }
+    );
+    return data;
   }
 
-  // Archivar: oculta el proyecto de la lista principal, NO borra datos
   async archivar(id: string) {
-    const { error } = await this.sb
-      .from('proyectos')
-      .update({ archivado: true })
-      .eq('id', id);
+    const nombre = this.proyectos().find(p => p.id === id)?.nombre ?? '';
+    const { error } = await this.sb.from('proyectos').update({ archivado: true }).eq('id', id);
     if (error) throw error;
     this.proyectos.update(list => list.filter(p => p.id !== id));
+    await this.logActividad(id, 'nota', `Proyecto "${nombre}" archivado`);
   }
 
-  // Desarchivar: vuelve a ser visible
   async desarchivar(id: string) {
     await this.update(id, { archivado: false });
     this.proyectos.update(list => list.filter(p => p.id !== id));
+    await this.logActividad(id, 'nota', 'Proyecto desarchivado');
   }
 
-  // Borrar permanentemente — solo para proyectos archivados
   async deletePermanente(id: string) {
     const { error } = await this.sb.from('proyectos').delete().eq('id', id);
     if (error) throw error;

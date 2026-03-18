@@ -78,6 +78,27 @@ export interface VistaPublicaProyecto {
   entregables?: Pick<Entregable, 'nombre' | 'url' | 'tipo'>[];
 }
 
+
+export type TipoActividad =
+  | 'proyecto_creado'
+  | 'estado_cambio'
+  | 'pago_registrado'
+  | 'pago_eliminado'
+  | 'entregable_agregado'
+  | 'entregable_eliminado'
+  | 'hora_registrada'
+  | 'nota';
+
+export interface Actividad {
+  id: string;
+  proyecto_id: string;
+  tipo: TipoActividad;
+  descripcion: string;
+  metadata?: Record<string, any>;
+  usuario_email?: string;
+  created_at: string;
+}
+
 export interface DashboardStats {
   ingresosMes: number;
   ingresosTotal: number;

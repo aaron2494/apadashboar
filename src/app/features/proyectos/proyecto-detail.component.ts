@@ -1,11 +1,13 @@
 import { Component, inject, OnInit, signal, computed } from '@angular/core';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormsModule, ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { ProyectoService } from '../../core/services/proyecto.service';
 import { PagoService } from '../../core/services/pago.service';
 import { EntregableService } from '../../core/services/entregable.service';
 import { HoraService, CATEGORIAS } from '../../core/services/hora.service';
-import { Proyecto, EstadoProyecto, ItemPresupuesto, TipoEntregable, CategoriaHora } from '../../core/models';
+import { ActividadService } from '../../core/services/actividad.service';
+import { ToastService } from '../../core/services/toast.service';
+import { Proyecto, EstadoProyecto, TipoEntregable } from '../../core/models';
 
 const META: Record<EstadoProyecto, { label: string; color: string; bg: string }> = {
   EN_PROGRESO: { label: 'En progreso', color: 'var(--blue)',  bg: 'var(--blue-bg)'  },
@@ -15,20 +17,37 @@ const META: Record<EstadoProyecto, { label: string; color: string; bg: string }>
 };
 
 const TRANS: Record<EstadoProyecto, EstadoProyecto[]> = {
-  EN_PROGRESO: ['PAUSADO', 'COMPLETADO', 'CANCELADO'],
-  PAUSADO:     ['EN_PROGRESO', 'CANCELADO'],
+  EN_PROGRESO: ['PAUSADO','COMPLETADO','CANCELADO'],
+  PAUSADO:     ['EN_PROGRESO','CANCELADO'],
   COMPLETADO:  [],
   CANCELADO:   [],
 };
 
-const TIPO_ICONS: Record<TipoEntregable, string> = {
-  figma:     'F', drive: 'G', notion: 'N',
-  github:    '<>', link: '↗'
+const ACTIVIDAD_ICON: Record<string, string> = {
+  proyecto_creado:      '🚀',
+  estado_cambio:        '🔄',
+  pago_registrado:      '💰',
+  pago_eliminado:       '🗑',
+  entregable_agregado:  '📎',
+  entregable_eliminado: '🗑',
+  hora_registrada:      '⏱',
+  nota:                 '📝',
 };
 
-const TIPO_COLORS: Record<TipoEntregable, string> = {
-  figma: '#a78bfa', drive: '#34d399', notion: '#94a3b8',
-  github: '#f87171', link: '#60a5fa'
+const TIPO_ICON: Record<TipoEntregable, string> = {
+  figma:  'F',
+  drive:  'D',
+  notion: 'N',
+  github: 'G',
+  link:   '↗',
+};
+
+const TIPO_COLOR: Record<TipoEntregable, string> = {
+  figma:  '#a259ff',
+  drive:  '#34a853',
+  notion: '#ffffff',
+  github: '#e6edf3',
+  link:   'var(--accent-2)',
 };
 
 @Component({
@@ -36,822 +55,1083 @@ const TIPO_COLORS: Record<TipoEntregable, string> = {
   standalone: true,
   imports: [RouterLink, FormsModule, ReactiveFormsModule],
   template: `
-<div class="page">
-  <!-- Breadcrumb -->
-  <div class="bc">
-    <a routerLink="/proyectos">Proyectos</a>
-    <span>/</span>
-    <span>{{ proyecto()?.nombre ?? '...' }}</span>
-  </div>
+    <div class="page">
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <a routerLink="/proyectos">Proyectos</a>
+        <span class="sep">/</span>
+        <span>{{ proyecto()?.nombre ?? '...' }}</span>
+      </div>
 
-  @if (!proyecto()) {
-    <div class="center-load"><div class="spin"></div></div>
-  } @else {
+      @if (!proyecto()) {
+        <div class="loading"><div class="spin"></div></div>
+      } @else {
+        <!-- Header -->
+        <div class="proj-header">
+          <div class="proj-meta">
+            <h1 class="proj-title">{{ proyecto()!.nombre }}</h1>
+            <div class="proj-sub">
+              <span class="proj-client">{{ proyecto()!.clientes?.empresa }}</span>
+              <span class="proj-dot">·</span>
+              <span class="badge"
+                [style.color]="META[proyecto()!.estado].color"
+                [style.background]="META[proyecto()!.estado].bg">
+                {{ META[proyecto()!.estado].label }}
+              </span>
+              @if (proyecto()!.fecha_entrega) {
+                <span class="proj-dot">·</span>
+                <span class="proj-date">Entrega: {{ fd(proyecto()!.fecha_entrega!) }}</span>
+              }
+            </div>
+          </div>
+        </div>
 
-    <!-- Header -->
-    <div class="proj-hd">
-      <div>
-        <h1 class="proj-title">{{ proyecto()!.nombre }}</h1>
-        <div class="proj-meta">
-          <span class="proj-client">{{ proyecto()!.clientes?.empresa }}</span>
-          <span class="sep">·</span>
-          <span class="badge" [style.color]="META[proyecto()!.estado].color" [style.background]="META[proyecto()!.estado].bg">
-            {{ META[proyecto()!.estado].label }}
-          </span>
-          @if (proyecto()!.fecha_entrega) {
-            <span class="sep">·</span>
-            <span class="date-chip">Entrega: {{ fd(proyecto()!.fecha_entrega!) }}</span>
+        <!-- Métricas -->
+        <div class="metrics-row">
+          <div class="metric">
+            <span class="metric-label">Presupuesto</span>
+            <span class="metric-val">{{ fmt(proyecto()!.presupuesto) }}</span>
+          </div>
+          <div class="metric-div"></div>
+          <div class="metric">
+            <span class="metric-label">Cobrado</span>
+            <span class="metric-val green">{{ fmt(proyecto()!.monto_cobrado) }}</span>
+          </div>
+          <div class="metric-div"></div>
+          <div class="metric">
+            <span class="metric-label">Pendiente</span>
+            <span class="metric-val" [class.amber]="pendiente() > 0">
+              {{ fmt(pendiente()) }}
+            </span>
+          </div>
+          <div class="metric-div"></div>
+          <div class="metric">
+            <span class="metric-label">Rentabilidad</span>
+            <span class="metric-val" [class.green]="rentabilidad() > 0">
+              {{ rentabilidad() > 0 ? fmt(rentabilidad()) + '/h' : '—' }}
+            </span>
+          </div>
+          <div class="metric-div"></div>
+          <div class="metric">
+            <span class="metric-label">Avance cobro</span>
+            <div class="metric-pct-wrap">
+              <div class="metric-track">
+                <div class="metric-fill"
+                  [style.width.%]="pct()"
+                  [style.background]="pct() >= 100 ? 'var(--green)' : 'var(--accent)'">
+                </div>
+              </div>
+              <span class="metric-val">{{ pct() }}%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+          @for (tab of tabs; track tab.id) {
+            <button class="tab" [class.active]="tabActivo() === tab.id"
+                    (click)="tabActivo.set(tab.id)">
+              {{ tab.label }}
+              @if (tab.count() > 0) {
+                <span class="tab-count">{{ tab.count() }}</span>
+              }
+            </button>
           }
         </div>
-      </div>
-      <div class="hd-actions">
-        <button class="btn-outline" (click)="copyPortal()">
-          {{ copied() ? '✓ Copiado' : '⎘ Link cliente' }}
-        </button>
-        <button class="btn-outline" (click)="generarPDF()">↓ Presupuesto PDF</button>
-      </div>
-    </div>
 
-    <!-- Métricas rápidas -->
-    <div class="metrics">
-      <div class="metric">
-        <span class="m-label">Presupuesto</span>
-        <span class="m-val">{{ fmt(proyecto()!.presupuesto) }}</span>
-      </div>
-      <div class="m-div"></div>
-      <div class="metric">
-        <span class="m-label">Cobrado</span>
-        <span class="m-val green">{{ fmt(proyecto()!.monto_cobrado) }}</span>
-      </div>
-      <div class="m-div"></div>
-      <div class="metric">
-        <span class="m-label">Pendiente</span>
-        <span class="m-val" [class.amber]="pendiente() > 0">{{ fmt(pendiente()) }}</span>
-      </div>
-      <div class="m-div"></div>
-      <div class="metric">
-        <span class="m-label">Horas totales</span>
-        <span class="m-val">{{ horaSvc.totalHoras() }}h</span>
-      </div>
-      <div class="m-div"></div>
-      <div class="metric">
-        <span class="m-label">Rentabilidad/h</span>
-        <span class="m-val" [class.green]="rentabilidad() > 0">
-          {{ horaSvc.totalHoras() > 0 ? fmt(rentabilidad()) : '—' }}
-        </span>
-      </div>
-      <div class="m-div"></div>
-      <div class="metric pct-metric">
-        <span class="m-label">Cobro</span>
-        <div class="pct-row-m">
-          <div class="mini-track"><div class="mini-fill" [style.width.%]="pct()"></div></div>
-          <span class="m-val">{{ pct() }}%</span>
+        <div class="tab-content">
+
+          <!-- TAB: PAGOS -->
+          @if (tabActivo() === 'pagos') {
+            <div class="panel">
+              <div class="panel-head">
+                <h2 class="panel-title">Historial de pagos</h2>
+                <button class="btn-outline" (click)="showPagoForm.set(!showPagoForm())">
+                  @if (showPagoForm()) { ✕ Cancelar } @else {
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Registrar pago
+                  }
+                </button>
+              </div>
+
+              @if (showPagoForm()) {
+                <form [formGroup]="pagoForm" (ngSubmit)="registrarPago()" class="inline-form">
+                  <div class="if-row">
+                    <div class="if-field">
+                      <label>Monto (ARS) *</label>
+                      <input formControlName="monto" type="number" placeholder="50000" />
+                    </div>
+                    <div class="if-field">
+                      <label>Fecha</label>
+                      <input formControlName="fecha" type="date" />
+                    </div>
+                    <div class="if-field if-field-wide">
+                      <label>Descripción</label>
+                      <input formControlName="nota" placeholder="Anticipo 50%, saldo final..." />
+                    </div>
+                    <button type="submit" class="cta-sm" [disabled]="savingPago()">
+                      @if (savingPago()) { ... } @else { Confirmar }
+                    </button>
+                  </div>
+                </form>
+              }
+
+              @if (pagoSvc.pagos().length === 0) {
+                <div class="empty-tab">Sin pagos registrados</div>
+              } @else {
+                <div class="pagos-list">
+                  @for (pago of pagoSvc.pagos(); track pago.id; let i = $index) {
+                    <div class="pago-row">
+                      <div class="pago-num">{{ i + 1 }}</div>
+                      <div class="pago-info">
+                        <span class="pago-monto">{{ fmt(pago.monto) }}</span>
+                        @if (pago.nota) { <span class="pago-nota">{{ pago.nota }}</span> }
+                      </div>
+                      <span class="pago-fecha">{{ fd(pago.fecha) }}</span>
+                      <button class="del-btn" (click)="eliminarPago(pago.id)">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          <!-- TAB: ENTREGABLES -->
+          @if (tabActivo() === 'entregables') {
+            <div class="panel">
+              <div class="panel-head">
+                <h2 class="panel-title">Archivos y entregables</h2>
+                <button class="btn-outline" (click)="showEntForm.set(!showEntForm())">
+                  @if (showEntForm()) { ✕ Cancelar } @else {
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Agregar link
+                  }
+                </button>
+              </div>
+
+              @if (showEntForm()) {
+                <form [formGroup]="entForm" (ngSubmit)="agregarEntregable()" class="inline-form">
+                  <div class="if-row">
+                    <div class="if-field">
+                      <label>Nombre *</label>
+                      <input formControlName="nombre" placeholder="Diseño final" />
+                    </div>
+                    <div class="if-field if-field-wide">
+                      <label>URL *</label>
+                      <input formControlName="url" placeholder="https://..." />
+                    </div>
+                    <div class="if-field">
+                      <label>Tipo</label>
+                      <select formControlName="tipo">
+                        <option value="figma">Figma</option>
+                        <option value="drive">Drive</option>
+                        <option value="notion">Notion</option>
+                        <option value="github">GitHub</option>
+                        <option value="link">Link</option>
+                      </select>
+                    </div>
+                    <button type="submit" class="cta-sm" [disabled]="savingEnt()">
+                      @if (savingEnt()) { ... } @else { Agregar }
+                    </button>
+                  </div>
+                </form>
+              }
+
+              @if (entSvc.entregables().length === 0) {
+                <div class="empty-tab">Sin entregables todavía</div>
+              } @else {
+                <div class="ent-list">
+                  @for (e of entSvc.entregables(); track e.id) {
+                    <div class="ent-row">
+                      <div class="ent-tipo-badge" [style.background]="TIPO_COLOR[e.tipo] + '20'"
+                           [style.color]="TIPO_COLOR[e.tipo]">
+                        {{ TIPO_ICON[e.tipo] }}
+                      </div>
+                      <div class="ent-info">
+                        <span class="ent-nombre">{{ e.nombre }}</span>
+                        <span class="ent-url">{{ e.url }}</span>
+                      </div>
+                      <a [href]="e.url" target="_blank" class="ent-open">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                          <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                        </svg>
+                        Abrir
+                      </a>
+                      <button class="del-btn" (click)="eliminarEntregable(e.id)">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          <!-- TAB: HORAS -->
+          @if (tabActivo() === 'horas') {
+            <div class="panel">
+              <div class="panel-head">
+                <h2 class="panel-title">Horas trabajadas</h2>
+                <div class="panel-head-right">
+                  <span class="total-horas">Total: {{ horaSvc.totalHoras() }}h</span>
+                  <button class="btn-outline" (click)="showHoraForm.set(!showHoraForm())">
+                    @if (showHoraForm()) { ✕ Cancelar } @else { + Registrar }
+                  </button>
+                </div>
+              </div>
+
+              @if (showHoraForm()) {
+                <form [formGroup]="horaForm" (ngSubmit)="registrarHora()" class="inline-form">
+                  <div class="if-row">
+                    <div class="if-field">
+                      <label>Categoría</label>
+                      <select formControlName="categoria">
+                        @for (cat of categoriasKeys; track cat) {
+                          <option [value]="cat">{{ CATEGORIAS[cat].label }}</option>
+                        }
+                      </select>
+                    </div>
+                    <div class="if-field">
+                      <label>Horas *</label>
+                      <input formControlName="cantidad" type="number" step="0.5" placeholder="2" />
+                    </div>
+                    <div class="if-field if-field-wide">
+                      <label>Descripción</label>
+                      <input formControlName="descripcion" placeholder="Reunión de kickoff..." />
+                    </div>
+                    <button type="submit" class="cta-sm" [disabled]="savingHora()">
+                      @if (savingHora()) { ... } @else { Agregar }
+                    </button>
+                  </div>
+                </form>
+              }
+
+              <!-- Gráfico de dona de horas por categoría -->
+              @if (horaSvc.totalHoras() > 0) {
+                <div class="hora-summary">
+                  @for (cat of categoriasKeys; track cat) {
+                    @if (horaSvc.porCategoria()[cat]) {
+                      <div class="hora-cat">
+                        <div class="hora-cat-dot" [style.background]="CATEGORIAS[cat].color"></div>
+                        <span class="hora-cat-label">{{ CATEGORIAS[cat].label }}</span>
+                        <div class="hora-cat-bar">
+                          <div class="hora-cat-fill"
+                            [style.width.%]="(horaSvc.porCategoria()[cat] / horaSvc.totalHoras()) * 100"
+                            [style.background]="CATEGORIAS[cat].color">
+                          </div>
+                        </div>
+                        <span class="hora-cat-val">{{ horaSvc.porCategoria()[cat] }}h</span>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+
+              @if (horaSvc.horas().length === 0) {
+                <div class="empty-tab">Sin horas registradas</div>
+              } @else {
+                <div class="horas-list">
+                  @for (h of horaSvc.horas(); track h.id) {
+                    <div class="hora-row">
+                      <div class="hora-cat-badge"
+                        [style.background]="CATEGORIAS[h.categoria].color + '20'"
+                        [style.color]="CATEGORIAS[h.categoria].color">
+                        {{ CATEGORIAS[h.categoria].label }}
+                      </div>
+                      <div class="hora-info">
+                        @if (h.descripcion) { <span class="hora-desc">{{ h.descripcion }}</span> }
+                      </div>
+                      <span class="hora-fecha">{{ fd(h.fecha) }}</span>
+                      <span class="hora-cant">{{ h.cantidad }}h</span>
+                      <button class="del-btn" (click)="eliminarHora(h.id)">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          <!-- TAB: ACTIVIDAD -->
+          @if (tabActivo() === 'actividad') {
+            <div class="panel">
+              <h2 class="panel-title">Historial de actividad</h2>
+
+              @if (actSvc.loading()) {
+                <div class="empty-tab">Cargando...</div>
+              } @else if (actSvc.actividades().length === 0) {
+                <div class="empty-tab">Sin actividad registrada</div>
+              } @else {
+                <div class="timeline">
+                  @for (a of actSvc.actividades(); track a.id; let last = $last) {
+                    <div class="tl-item">
+                      <div class="tl-left">
+                        <div class="tl-icon">{{ ACTIVIDAD_ICON[a.tipo] ?? '•' }}</div>
+                        @if (!last) { <div class="tl-line"></div> }
+                      </div>
+                      <div class="tl-body">
+                        <p class="tl-desc">{{ a.descripcion }}</p>
+                        <div class="tl-meta">
+                          @if (a.usuario_email) {
+                            <span class="tl-user">{{ a.usuario_email }}</span>
+                            <span class="tl-sep">·</span>
+                          }
+                          <span class="tl-time">{{ fdRelativo(a.created_at) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          <!-- TAB: PRESUPUESTO -->
+          @if (tabActivo() === 'presupuesto') {
+            <div class="panel">
+              <div class="panel-head">
+                <h2 class="panel-title">Items del presupuesto</h2>
+                <div class="panel-head-right">
+                  <button class="btn-pdf" (click)="generarPDF()" [disabled]="generandoPDF()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                      <line x1="16" y1="13" x2="8" y2="13"/>
+                      <line x1="16" y1="17" x2="8" y2="17"/>
+                    </svg>
+                    @if (generandoPDF()) { Generando... } @else { Descargar PDF }
+                  </button>
+                </div>
+              </div>
+
+              <!-- Formulario para agregar item -->
+              <form [formGroup]="itemForm" (ngSubmit)="agregarItem()" class="inline-form" style="margin-bottom:16px">
+                <div class="if-row">
+                  <div class="if-field if-field-wide">
+                    <label>Descripción *</label>
+                    <input formControlName="descripcion" placeholder="Diseño de logo, desarrollo web..." />
+                  </div>
+                  <div class="if-field">
+                    <label>Cant.</label>
+                    <input formControlName="cantidad" type="number" min="1" style="width:70px" />
+                  </div>
+                  <div class="if-field">
+                    <label>Precio unit. (ARS)</label>
+                    <input formControlName="precio_unitario" type="number" min="0" style="width:130px" />
+                  </div>
+                  <button type="submit" class="cta-sm">+ Agregar</button>
+                </div>
+              </form>
+
+              <!-- Tabla de items -->
+              @if (!proyecto()!.items_presupuesto || proyecto()!.items_presupuesto!.length === 0) {
+                <div class="empty-tab">Sin items todavía — agregá el detalle del presupuesto</div>
+              } @else {
+                <table class="budget-table">
+                  <thead>
+                    <tr>
+                      <th>Descripción</th>
+                      <th class="r">Cant.</th>
+                      <th class="r">Precio unit.</th>
+                      <th class="r">Subtotal</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (item of proyecto()!.items_presupuesto!; track $index; let i = $index) {
+                      <tr>
+                        <td>{{ item.descripcion }}</td>
+                        <td class="r mono">{{ item.cantidad }}</td>
+                        <td class="r mono">{{ fmt(item.precio_unitario) }}</td>
+                        <td class="r mono green">{{ fmt(item.cantidad * item.precio_unitario) }}</td>
+                        <td>
+                          <button class="del-btn" style="opacity:1" (click)="quitarItem(i)">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="3 6 5 6 21 6"/>
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            </svg>
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colspan="3" class="total-label">Total presupuestado</td>
+                      <td class="r mono total-val">{{ fmt(totalItems()) }}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              }
+            </div>
+          }
+
+
         </div>
-      </div>
-    </div>
 
-    <!-- Tabs -->
-    <div class="tabs">
-      @for (tab of tabs; track tab.id) {
-        <button class="tab" [class.active]="activeTab() === tab.id"
-                (click)="activeTab.set(tab.id)">
-          {{ tab.label }}
-        </button>
+        <!-- Sidebar de acciones -->
+        <div class="side-panel">
+
+          <!-- Cambiar estado -->
+          @if (TRANS[proyecto()!.estado].length > 0) {
+            <div class="side-card">
+              <h3 class="side-title">Cambiar estado</h3>
+              <div class="trans-list">
+                @for (e of TRANS[proyecto()!.estado]; track e) {
+                  <button class="trans-btn" [disabled]="transitioning()"
+                          (click)="cambiarEstado(e)">
+                    <span class="trans-dot" [style.background]="META[e].color"></span>
+                    {{ META[e].label }}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto">
+                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Portal del cliente -->
+          @if (proyecto()!.token_publico) {
+            <div class="side-card portal-card">
+              <h3 class="side-title">Portal del cliente</h3>
+              <p class="portal-hint">Compartí este link con tu cliente para que vea el avance.</p>
+              <div class="portal-url" (click)="copiarPortal()">
+                <span class="portal-url-text">/p/{{ proyecto()!.token_publico!.slice(0,12) }}...</span>
+                <span class="portal-copy-icon">
+                  @if (copiado()) {
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  } @else {
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  }
+                </span>
+              </div>
+              <a [href]="portalUrl()" target="_blank" class="portal-btn">
+                Abrir portal
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </a>
+            </div>
+          }
+
+          <!-- Info -->
+          <div class="side-card">
+            <h3 class="side-title">Información</h3>
+            <div class="info-rows">
+              <div class="info-row">
+                <span class="info-k">Cliente</span>
+                <span class="info-v">{{ proyecto()!.clientes?.empresa }}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-k">Inicio</span>
+                <span class="info-v mono">{{ fd(proyecto()!.fecha_inicio) }}</span>
+              </div>
+              @if (proyecto()!.fecha_entrega) {
+                <div class="info-row">
+                  <span class="info-k">Entrega</span>
+                  <span class="info-v mono">{{ fd(proyecto()!.fecha_entrega!) }}</span>
+                </div>
+              }
+              <div class="info-row">
+                <span class="info-k">Horas</span>
+                <span class="info-v">{{ horaSvc.totalHoras() }}h registradas</span>
+              </div>
+              <div class="info-row">
+                <span class="info-k">Pagos</span>
+                <span class="info-v">{{ pagoSvc.pagos().length }} registrados</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
       }
     </div>
-
-    <!-- ══ TAB: PAGOS ══════════════════════════════════════ -->
-    @if (activeTab() === 'pagos') {
-      <div class="panel">
-        <div class="panel-hd">
-          <h2 class="panel-title">Historial de pagos</h2>
-          <button class="btn-sm" (click)="showPagoForm.set(!showPagoForm())">
-            {{ showPagoForm() ? '✕ Cancelar' : '+ Registrar pago' }}
-          </button>
-        </div>
-
-        @if (showPagoForm()) {
-          <form [formGroup]="pagoForm" (ngSubmit)="registrarPago()" class="inline-form">
-            <div class="if-row">
-              <div class="if-field">
-                <label>Monto (ARS) *</label>
-                <input formControlName="monto" type="number" placeholder="50000" />
-              </div>
-              <div class="if-field">
-                <label>Fecha</label>
-                <input formControlName="fecha" type="date" />
-              </div>
-              <div class="if-field wide">
-                <label>Descripción</label>
-                <input formControlName="nota" placeholder="Anticipo 50%, saldo final..." />
-              </div>
-            </div>
-            @if (pagoErr()) { <div class="err-sm">{{ pagoErr() }}</div> }
-            <button type="submit" class="cta-sm" [disabled]="savingPago()">
-              {{ savingPago() ? 'Guardando...' : 'Confirmar pago' }}
-            </button>
-          </form>
-        }
-
-        @if (pagoSvc.pagos().length === 0) {
-          <div class="empty-state">Sin pagos registrados</div>
-        } @else {
-          <div class="list">
-            @for (pago of pagoSvc.pagos(); track pago.id; let i = $index) {
-              <div class="list-row">
-                <span class="list-num">{{ i + 1 }}</span>
-                <div class="list-info">
-                  <span class="pago-amount">{{ fmt(pago.monto) }}</span>
-                  @if (pago.nota) { <span class="list-sub">{{ pago.nota }}</span> }
-                </div>
-                <span class="list-date">{{ fd(pago.fecha) }}</span>
-                <button class="del-btn" (click)="deletePago(pago.id)">✕</button>
-              </div>
-            }
-          </div>
-          <div class="list-total">
-            <span>Total cobrado</span>
-            <span class="green mono">{{ fmt(proyecto()!.monto_cobrado) }}</span>
-          </div>
-        }
-      </div>
-    }
-
-    <!-- ══ TAB: ENTREGABLES ════════════════════════════════ -->
-    @if (activeTab() === 'entregables') {
-      <div class="panel">
-        <div class="panel-hd">
-          <h2 class="panel-title">Archivos y entregables</h2>
-          <button class="btn-sm" (click)="showEntForm.set(!showEntForm())">
-            {{ showEntForm() ? '✕ Cancelar' : '+ Agregar' }}
-          </button>
-        </div>
-
-        @if (showEntForm()) {
-          <form [formGroup]="entForm" (ngSubmit)="crearEntregable()" class="inline-form">
-            <div class="if-row">
-              <div class="if-field">
-                <label>Tipo</label>
-                <select formControlName="tipo">
-                  <option value="figma">Figma</option>
-                  <option value="drive">Google Drive</option>
-                  <option value="notion">Notion</option>
-                  <option value="github">GitHub</option>
-                  <option value="link">Link externo</option>
-                </select>
-              </div>
-              <div class="if-field wide">
-                <label>Nombre *</label>
-                <input formControlName="nombre" placeholder="Diseño final, Carpeta de contenido..." />
-              </div>
-              <div class="if-field wider">
-                <label>URL *</label>
-                <input formControlName="url" placeholder="https://..." />
-              </div>
-            </div>
-            @if (entErr()) { <div class="err-sm">{{ entErr() }}</div> }
-            <button type="submit" class="cta-sm" [disabled]="savingEnt()">
-              {{ savingEnt() ? 'Guardando...' : 'Agregar entregable' }}
-            </button>
-          </form>
-        }
-
-        @if (entSvc.entregables().length === 0) {
-          <div class="empty-state">Sin entregables todavía</div>
-        } @else {
-          <div class="ent-grid">
-            @for (e of entSvc.entregables(); track e.id) {
-              <div class="ent-card">
-                <div class="ent-icon" [style.background]="getTipoColor(e.tipo) + '20'"
-                     [style.color]="getTipoColor(e.tipo)">
-                  {{ getTipoIcon(e.tipo) }}
-                </div>
-                <div class="ent-info">
-                  <span class="ent-nombre">{{ e.nombre }}</span>
-                  <a [href]="e.url" target="_blank" class="ent-url">{{ e.url }}</a>
-                </div>
-                <div class="ent-actions">
-                  <a [href]="e.url" target="_blank" class="ent-open">Abrir ↗</a>
-                  <button class="del-btn" (click)="deleteEnt(e.id)">✕</button>
-                </div>
-              </div>
-            }
-          </div>
-        }
-      </div>
-    }
-
-    <!-- ══ TAB: HORAS ══════════════════════════════════════ -->
-    @if (activeTab() === 'horas') {
-      <div class="panel">
-        <div class="panel-hd">
-          <h2 class="panel-title">Horas trabajadas</h2>
-          <button class="btn-sm" (click)="showHoraForm.set(!showHoraForm())">
-            {{ showHoraForm() ? '✕ Cancelar' : '+ Registrar horas' }}
-          </button>
-        </div>
-
-        @if (showHoraForm()) {
-          <form [formGroup]="horaForm" (ngSubmit)="crearHora()" class="inline-form">
-            <div class="if-row">
-              <div class="if-field">
-                <label>Categoría</label>
-                <select formControlName="categoria">
-                  @for (cat of catKeys; track cat) {
-                    <option [value]="cat">{{ CATEGORIAS[cat].label }}</option>
-                  }
-                </select>
-              </div>
-              <div class="if-field">
-                <label>Horas *</label>
-                <input formControlName="cantidad" type="number" step="0.5" placeholder="2.5" />
-              </div>
-              <div class="if-field">
-                <label>Fecha</label>
-                <input formControlName="fecha" type="date" />
-              </div>
-              <div class="if-field wide">
-                <label>Descripción</label>
-                <input formControlName="descripcion" placeholder="Qué se hizo..." />
-              </div>
-            </div>
-            @if (horaErr()) { <div class="err-sm">{{ horaErr() }}</div> }
-            <button type="submit" class="cta-sm" [disabled]="savingHora()">
-              {{ savingHora() ? 'Guardando...' : 'Registrar' }}
-            </button>
-          </form>
-        }
-
-        <!-- Resumen por categoría -->
-        @if (horaSvc.totalHoras() > 0) {
-          <div class="cat-summary">
-            @for (cat of catKeys; track cat) {
-              @if (horaSvc.porCategoria()[cat]) {
-                <div class="cat-item">
-                  <span class="cat-dot" [style.background]="CATEGORIAS[cat].color"></span>
-                  <span class="cat-label">{{ CATEGORIAS[cat].label }}</span>
-                  <div class="cat-bar-wrap">
-                    <div class="cat-bar"
-                      [style.width.%]="(horaSvc.porCategoria()[cat] / horaSvc.totalHoras()) * 100"
-                      [style.background]="CATEGORIAS[cat].color + '60'">
-                    </div>
-                  </div>
-                  <span class="cat-val">{{ horaSvc.porCategoria()[cat] }}h</span>
-                </div>
-              }
-            }
-            <div class="cat-total">
-              <span>Total</span>
-              <span class="mono">{{ horaSvc.totalHoras() }}h</span>
-            </div>
-          </div>
-        }
-
-        @if (horaSvc.horas().length === 0) {
-          <div class="empty-state">Sin horas registradas todavía</div>
-        } @else {
-          <div class="list">
-            @for (h of horaSvc.horas(); track h.id) {
-              <div class="list-row">
-                <span class="hora-dot" [style.background]="CATEGORIAS[h.categoria].color"></span>
-                <div class="list-info">
-                  <span class="hora-cat">{{ CATEGORIAS[h.categoria].label }}</span>
-                  @if (h.descripcion) { <span class="list-sub">{{ h.descripcion }}</span> }
-                </div>
-                <span class="hora-qty mono">{{ h.cantidad }}h</span>
-                <span class="list-date">{{ fd(h.fecha) }}</span>
-                <button class="del-btn" (click)="deleteHora(h.id)">✕</button>
-              </div>
-            }
-          </div>
-        }
-      </div>
-    }
-
-    <!-- ══ TAB: PRESUPUESTO ════════════════════════════════ -->
-    @if (activeTab() === 'presupuesto') {
-      <div class="panel">
-        <div class="panel-hd">
-          <h2 class="panel-title">Items del presupuesto</h2>
-          <div class="hd-btns">
-            <button class="btn-sm" (click)="addItem()">+ Agregar item</button>
-            <button class="btn-sm primary" (click)="generarPDF()">↓ Descargar PDF</button>
-          </div>
-        </div>
-
-        <div class="items-table">
-          <div class="items-head">
-            <span>Descripción</span>
-            <span class="r">Cant.</span>
-            <span class="r">Precio unit.</span>
-            <span class="r">Subtotal</span>
-            <span></span>
-          </div>
-          @for (item of items(); track $index; let i = $index) {
-            <div class="item-row">
-              <input class="item-input" [(ngModel)]="item.descripcion"
-                     placeholder="Descripción del servicio" (change)="saveItems()" />
-              <input class="item-input r" [(ngModel)]="item.cantidad"
-                     type="number" min="1" (change)="saveItems()" />
-              <input class="item-input r" [(ngModel)]="item.precio_unitario"
-                     type="number" min="0" placeholder="0" (change)="saveItems()" />
-              <span class="item-sub r mono">{{ fmt(item.cantidad * item.precio_unitario) }}</span>
-              <button class="del-btn" (click)="removeItem(i)">✕</button>
-            </div>
-          }
-          @if (items().length === 0) {
-            <div class="empty-state">Agregá items para generar el presupuesto</div>
-          }
-        </div>
-
-        @if (items().length > 0) {
-          <div class="items-footer">
-            <div class="total-row">
-              <span>Subtotal</span>
-              <span class="mono">{{ fmt(subtotal()) }}</span>
-            </div>
-            <div class="total-row main">
-              <span>Total presupuestado</span>
-              <span class="mono green">{{ fmt(proyecto()!.presupuesto) }}</span>
-            </div>
-          </div>
-        }
-      </div>
-    }
-
-    <!-- ══ TAB: ESTADO ═════════════════════════════════════ -->
-    @if (activeTab() === 'estado') {
-      <div class="two-col">
-        <div class="panel">
-          <h2 class="panel-title">Cambiar estado del proyecto</h2>
-          @if (TRANS[proyecto()!.estado].length === 0) {
-            <p class="no-actions">No hay transiciones disponibles para este estado.</p>
-          } @else {
-            <div class="trans-list">
-              @for (e of TRANS[proyecto()!.estado]; track e) {
-                <button class="trans-btn" [disabled]="transitioning()"
-                        (click)="cambiarEstado(e)">
-                  <span class="trans-dot" [style.background]="META[e].color"></span>
-                  Mover a {{ META[e].label }}
-                  <span class="trans-arrow">→</span>
-                </button>
-              }
-            </div>
-          }
-        </div>
-
-        <div class="panel">
-          <h2 class="panel-title">Editar proyecto</h2>
-          <form [formGroup]="editForm" (ngSubmit)="guardarEdicion()">
-            <div class="if-field" style="margin-bottom:10px">
-              <label>Nombre</label>
-              <input formControlName="nombre" />
-            </div>
-            <div class="if-field" style="margin-bottom:10px">
-              <label>Presupuesto total (ARS)</label>
-              <input formControlName="presupuesto" type="number" />
-            </div>
-            <div class="if-field" style="margin-bottom:10px">
-              <label>Fecha de entrega</label>
-              <input formControlName="fecha_entrega" type="date" />
-            </div>
-            <div class="if-field" style="margin-bottom:14px">
-              <label>Descripción</label>
-              <textarea formControlName="descripcion" rows="3"></textarea>
-            </div>
-            @if (editErr()) { <div class="err-sm">{{ editErr() }}</div> }
-            <button type="submit" class="cta-sm" [disabled]="savingEdit()">
-              {{ savingEdit() ? 'Guardando...' : 'Guardar cambios' }}
-            </button>
-          </form>
-        </div>
-      </div>
-    }
-
-  }
-</div>
   `,
   styles: [`
-    .page { max-width: 960px; }
+    .page {
+      display: grid;
+      grid-template-columns: 1fr 240px;
+      grid-template-rows: auto auto auto auto 1fr;
+      gap: 0 16px;
+      max-width: 1020px;
+      align-items: start;
+    }
 
-    /* Breadcrumb */
-    .bc { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-3); margin-bottom:20px; }
-    .bc a { color:var(--ink-3); } .bc a:hover { color:var(--accent-2); }
-    .bc .sep,.bc span:not(.sep) { }
+    /* Breadcrumb — full width */
+    .breadcrumb {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12.5px; color: var(--ink-3); margin-bottom: 16px;
+    }
+    .breadcrumb a { color: var(--ink-3); transition: color 0.15s; }
+    .breadcrumb a:hover { color: var(--accent-2); }
+    .sep { opacity: 0.4; }
 
-    /* Loader */
-    .center-load { display:flex; justify-content:center; padding:60px; }
-    .spin { width:28px;height:28px;border:2px solid var(--line-2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
-    @keyframes spin { to{transform:rotate(360deg)} }
+    /* Header — full width */
+    .proj-header {
+      grid-column: 1 / -1;
+      margin-bottom: 14px;
+    }
+    .proj-title { font-size: 1.75rem; font-weight: 600; color: var(--ink); letter-spacing: -0.03em; margin-bottom: 8px; }
+    .proj-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .proj-client { font-size: 13.5px; color: var(--ink-2); font-weight: 500; }
+    .proj-dot { color: var(--ink-3); font-size: 10px; }
+    .proj-date { font-size: 12.5px; color: var(--ink-3); font-family: var(--mono); }
+    .badge { padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 500; }
 
-    /* Header */
-    .proj-hd { display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px; }
-    .proj-title { font-size:1.6rem;font-weight:600;color:var(--ink);letter-spacing:-.03em;margin-bottom:6px; }
-    .proj-meta { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
-    .proj-client { font-size:13.5px;color:var(--ink-2);font-weight:500; }
-    .sep { color:var(--ink-3);font-size:10px; }
-    .badge { padding:3px 8px;border-radius:5px;font-size:11px;font-weight:500; }
-    .date-chip { font-size:12px;color:var(--ink-3);font-family:var(--mono); }
-    .hd-actions { display:flex;gap:8px;flex-shrink:0; }
-    .btn-outline { display:flex;align-items:center;gap:6px;padding:7px 14px;background:none;border:1px solid var(--line-2);border-radius:var(--radius);color:var(--ink-2);font-size:12.5px;cursor:pointer;transition:all .15s;white-space:nowrap; }
-    .btn-outline:hover { border-color:var(--accent);color:var(--accent-2); }
+    /* Métricas — full width */
+    .metrics-row {
+      grid-column: 1 / -1;
+      display: flex; align-items: center;
+      background: var(--bg-2); border: 1px solid var(--line);
+      border-radius: var(--radius-lg); padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .metric { flex: 1; }
+    .metric-div { width: 1px; height: 36px; background: var(--line); margin: 0 18px; flex-shrink: 0; }
+    .metric-label { display: block; font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
+    .metric-val { font-size: 1.1rem; font-weight: 600; color: var(--ink); font-family: var(--mono); letter-spacing: -0.02em; }
+    .metric-val.green { color: var(--green); }
+    .metric-val.amber { color: var(--amber); }
+    .metric-pct-wrap { display: flex; align-items: center; gap: 8px; }
+    .metric-track { flex: 1; height: 4px; background: var(--bg-3); border-radius: 999px; overflow: hidden; max-width: 60px; }
+    .metric-fill { height: 100%; border-radius: 999px; transition: width 0.5s; }
 
-    /* Métricas */
-    .metrics { display:flex;align-items:center;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:18px;gap:0;overflow-x:auto; }
-    .metric { flex-shrink:0; }
-    .m-div { width:1px;height:36px;background:var(--line);margin:0 18px;flex-shrink:0; }
-    .m-label { display:block;font-size:10.5px;font-weight:500;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px; }
-    .m-val { font-size:1.1rem;font-weight:600;color:var(--ink);font-family:var(--mono);letter-spacing:-.02em; }
-    .m-val.green { color:var(--green); }
-    .m-val.amber { color:var(--amber); }
-    .pct-metric { min-width:120px; }
-    .pct-row-m { display:flex;align-items:center;gap:8px; }
-    .mini-track { width:60px;height:5px;background:var(--bg-3);border-radius:999px;overflow:hidden; }
-    .mini-fill { height:100%;background:var(--accent);border-radius:999px;transition:width .4s; }
+    /* Tabs — col 1 */
+    .tabs {
+      grid-column: 1;
+      display: flex; gap: 2px;
+      border-bottom: 1px solid var(--line); margin-bottom: 14px;
+    }
+    .tab {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 14px; border-radius: 8px 8px 0 0;
+      background: none; border: none;
+      color: var(--ink-3); font-size: 13px; cursor: pointer;
+      transition: all 0.15s; position: relative;
+    }
+    .tab:hover { color: var(--ink-2); background: var(--bg-3); }
+    .tab.active {
+      color: var(--ink); background: var(--bg-2);
+      border: 1px solid var(--line); border-bottom: 1px solid var(--bg-2);
+      margin-bottom: -1px;
+    }
+    .tab-count {
+      background: rgba(124,106,247,0.2); color: var(--accent-2);
+      border-radius: 999px; padding: 0 6px; font-size: 11px; font-weight: 600;
+    }
 
-    /* Tabs */
-    .tabs { display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:18px; }
-    .tab { padding:9px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-3);font-size:13.5px;cursor:pointer;transition:all .15s;margin-bottom:-1px; }
-    .tab:hover { color:var(--ink-2); }
-    .tab.active { color:var(--accent-2);border-bottom-color:var(--accent); }
+    /* Tab content — col 1 */
+    .tab-content { grid-column: 1; }
+
+    /* Side panel — col 2, rows 4-5 */
+    .side-panel { grid-column: 2; grid-row: 4 / 6; display: flex; flex-direction: column; gap: 10px; }
+
+    /* Loading */
+    .loading { grid-column: 1/-1; display: flex; justify-content: center; padding: 60px; }
+    .spin { width: 28px; height: 28px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Panel */
-    .panel { background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-lg);padding:18px;margin-bottom:12px; }
-    .panel-hd { display:flex;align-items:center;justify-content:space-between;margin-bottom:16px; }
-    .panel-title { font-size:13.5px;font-weight:600;color:var(--ink);letter-spacing:-.01em;margin:0 0 14px; }
-    .panel-hd .panel-title { margin:0; }
-    .hd-btns { display:flex;gap:6px; }
-    .btn-sm { display:flex;align-items:center;gap:5px;padding:6px 12px;background:none;border:1px solid var(--line-2);border-radius:var(--radius);color:var(--ink-2);font-size:12px;cursor:pointer;transition:all .15s; }
-    .btn-sm:hover { border-color:var(--accent);color:var(--accent-2); }
-    .btn-sm.primary { background:var(--accent);border-color:var(--accent);color:white; }
-    .btn-sm.primary:hover { opacity:.88; }
+    .panel { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 10px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .panel-head-right { display: flex; align-items: center; gap: 10px; }
+    .panel-title { font-size: 13.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; margin: 0 0 14px; }
+    .panel-head .panel-title { margin: 0; }
+    .total-horas { font-size: 12px; color: var(--ink-2); font-family: var(--mono); font-weight: 500; }
+
+    .btn-outline { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: none; border: 1px solid var(--line-2); border-radius: var(--radius); color: var(--ink-2); font-size: 12px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent-2); }
 
     /* Inline form */
-    .inline-form { background:var(--bg-3);border-radius:var(--radius);padding:14px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px; }
-    .if-row { display:flex;gap:10px;flex-wrap:wrap; }
-    .if-field { display:flex;flex-direction:column;gap:5px;min-width:120px; }
-    .if-field.wide { flex:1;min-width:160px; }
-    .if-field.wider { flex:2;min-width:200px; }
-    .if-field label { font-size:11.5px;font-weight:500;color:var(--ink-2); }
-    .if-field input,.if-field select,.if-field textarea { padding:8px 11px;background:var(--bg-1);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:13.5px;font-family:var(--font); }
-    .if-field input:focus,.if-field select:focus,.if-field textarea:focus { outline:none;border-color:var(--accent); }
-    .err-sm { font-size:12px;color:var(--red);background:var(--red-bg);padding:7px 10px;border-radius:7px; }
-    .cta-sm { padding:8px 14px;background:var(--accent);border:none;border-radius:8px;color:white;font-size:13px;font-weight:500;cursor:pointer;align-self:flex-start; }
-    .cta-sm:disabled { opacity:.5;cursor:not-allowed; }
+    .inline-form { background: var(--bg-3); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; }
+    .if-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+    .if-field { display: flex; flex-direction: column; gap: 5px; }
+    .if-field-wide { flex: 1; min-width: 160px; }
+    .if-field label { font-size: 11px; font-weight: 500; color: var(--ink-2); }
+    .if-field input, .if-field select { padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font-size: 13.5px; font-family: var(--font); }
+    .if-field input:focus, .if-field select:focus { outline: none; border-color: var(--accent); }
+    .cta-sm { padding: 8px 16px; background: var(--accent); border: none; border-radius: 8px; color: white; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; align-self: flex-end; transition: opacity 0.15s; }
+    .cta-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Lista genérica */
-    .list { display:flex;flex-direction:column;gap:1px; }
-    .list-row { display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:8px;transition:background .15s; }
-    .list-row:hover { background:var(--bg-3); }
-    .list-row:hover .del-btn { opacity:1; }
-    .list-num { width:20px;height:20px;border-radius:5px;background:var(--bg-3);color:var(--ink-3);font-size:11px;font-family:var(--mono);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
-    .list-info { flex:1;display:flex;flex-direction:column;gap:1px; }
-    .list-sub { font-size:11.5px;color:var(--ink-3); }
-    .list-date { font-size:11.5px;color:var(--ink-3);font-family:var(--mono);white-space:nowrap; }
-    .del-btn { background:none;border:none;cursor:pointer;color:var(--ink-3);padding:4px 5px;border-radius:5px;opacity:0;transition:all .15s;font-size:11px; }
-    .del-btn:hover { color:var(--red);background:var(--red-bg); }
-    .pago-amount { font-size:14px;font-weight:600;color:var(--green);font-family:var(--mono); }
-    .list-total { display:flex;justify-content:space-between;align-items:center;padding:12px 8px 0;border-top:1px solid var(--line);margin-top:8px;font-size:13px;color:var(--ink-2); }
+    .empty-tab { text-align: center; padding: 28px; color: var(--ink-3); font-size: 13.5px; }
+
+    /* Pagos */
+    .pagos-list { display: flex; flex-direction: column; gap: 1px; }
+    .pago-row { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 8px; transition: background 0.15s; }
+    .pago-row:hover { background: var(--bg-3); }
+    .pago-row:hover .del-btn { opacity: 1; }
+    .pago-num { width: 22px; height: 22px; border-radius: 6px; background: var(--bg-3); color: var(--ink-3); font-size: 11px; font-family: var(--mono); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .pago-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+    .pago-monto { font-size: 14px; font-weight: 600; color: var(--green); font-family: var(--mono); }
+    .pago-nota { font-size: 12px; color: var(--ink-3); }
+    .pago-fecha { font-size: 12px; color: var(--ink-3); font-family: var(--mono); white-space: nowrap; }
+    .del-btn { background: none; border: none; cursor: pointer; color: var(--ink-3); padding: 4px; border-radius: 5px; opacity: 0; transition: all 0.15s; display: flex; }
+    .del-btn:hover { color: var(--red); background: var(--red-bg); }
 
     /* Entregables */
-    .ent-grid { display:flex;flex-direction:column;gap:6px; }
-    .ent-card { display:flex;align-items:center;gap:12px;padding:11px 12px;background:var(--bg-3);border-radius:9px;transition:background .15s; }
-    .ent-card:hover { background:var(--bg-1); }
-    .ent-card:hover .del-btn { opacity:1; }
-    .ent-icon { width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:var(--mono);flex-shrink:0; }
-    .ent-info { flex:1;min-width:0;display:flex;flex-direction:column;gap:2px; }
-    .ent-nombre { font-size:13.5px;font-weight:500;color:var(--ink); }
-    .ent-url { font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-    .ent-actions { display:flex;align-items:center;gap:8px; }
-    .ent-open { font-size:12px;color:var(--accent-2);text-decoration:none; }
+    .ent-list { display: flex; flex-direction: column; gap: 6px; }
+    .ent-row { display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg-3); border-radius: 8px; }
+    .ent-row:hover .del-btn { opacity: 1; }
+    .ent-tipo-badge { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+    .ent-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+    .ent-nombre { font-size: 13.5px; font-weight: 500; color: var(--ink); }
+    .ent-url { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+    .ent-open { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--accent-2); text-decoration: none; padding: 5px 10px; border-radius: 6px; transition: background 0.15s; white-space: nowrap; }
+    .ent-open:hover { background: rgba(124,106,247,0.1); }
 
     /* Horas */
-    .cat-summary { background:var(--bg-3);border-radius:var(--radius);padding:14px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px; }
-    .cat-item { display:flex;align-items:center;gap:10px; }
-    .cat-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
-    .cat-label { font-size:12.5px;color:var(--ink-2);width:90px;flex-shrink:0; }
-    .cat-bar-wrap { flex:1;height:6px;background:var(--bg-2);border-radius:999px;overflow:hidden; }
-    .cat-bar { height:100%;border-radius:999px;transition:width .4s; }
-    .cat-val { font-size:12.5px;color:var(--ink);font-family:var(--mono);width:40px;text-align:right;flex-shrink:0; }
-    .cat-total { display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-2);font-weight:600; }
-    .hora-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
-    .hora-cat { font-size:13.5px;font-weight:500;color:var(--ink); }
-    .hora-qty { font-size:14px;font-weight:600;color:var(--accent-2);min-width:40px;text-align:right; }
+    .hora-summary { margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+    .hora-cat { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+    .hora-cat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .hora-cat-label { width: 90px; color: var(--ink-2); font-size: 12px; }
+    .hora-cat-bar { flex: 1; height: 5px; background: var(--bg-3); border-radius: 999px; overflow: hidden; }
+    .hora-cat-fill { height: 100%; border-radius: 999px; transition: width 0.4s; }
+    .hora-cat-val { font-family: var(--mono); font-size: 12px; color: var(--ink-2); width: 32px; text-align: right; }
+    .horas-list { display: flex; flex-direction: column; gap: 1px; }
+    .hora-row { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 8px; transition: background 0.15s; }
+    .hora-row:hover { background: var(--bg-3); }
+    .hora-row:hover .del-btn { opacity: 1; }
+    .hora-cat-badge { padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
+    .hora-info { flex: 1; }
+    .hora-desc { font-size: 13px; color: var(--ink-2); }
+    .hora-fecha { font-size: 11.5px; color: var(--ink-3); font-family: var(--mono); white-space: nowrap; }
+    .hora-cant { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; }
 
-    /* Items presupuesto */
-    .items-table { display:flex;flex-direction:column;gap:1px;margin-bottom:0; }
-    .items-head { display:grid;grid-template-columns:1fr 60px 120px 120px 28px;gap:8px;padding:6px 8px;font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em; }
-    .item-row { display:grid;grid-template-columns:1fr 60px 120px 120px 28px;gap:8px;align-items:center;padding:4px 4px; }
-    .item-row:hover .del-btn { opacity:1; }
-    .item-input { padding:7px 10px;background:var(--bg-3);border:1px solid transparent;border-radius:7px;color:var(--ink);font-size:13px;font-family:var(--font);transition:border-color .15s; }
-    .item-input:focus { outline:none;border-color:var(--accent);background:var(--bg-1); }
-    .item-input.r { text-align:right; }
-    .item-sub { font-size:13px;font-family:var(--mono);color:var(--ink-2);text-align:right;padding-right:4px; }
-    .items-footer { border-top:1px solid var(--line);padding-top:14px;margin-top:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-end; }
-    .total-row { display:flex;gap:40px;font-size:13px;color:var(--ink-2); }
-    .total-row.main { font-size:15px;font-weight:600;color:var(--ink); }
-    .r { text-align:right; }
+    /* Timeline de actividad */
+    .timeline { display: flex; flex-direction: column; }
+    .tl-item { display: flex; gap: 14px; }
+    .tl-left { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+    .tl-icon { width: 30px; height: 30px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--line-2); display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+    .tl-line { width: 1px; flex: 1; background: var(--line); margin: 4px 0; min-height: 20px; }
+    .tl-body { padding: 4px 0 18px; flex: 1; }
+    .tl-desc { font-size: 13.5px; color: var(--ink); margin-bottom: 4px; font-weight: 500; }
+    .tl-meta { display: flex; align-items: center; gap: 6px; }
+    .tl-user { font-size: 11.5px; color: var(--accent-2); }
+    .tl-sep { color: var(--ink-3); font-size: 10px; }
+    .tl-time { font-size: 11.5px; color: var(--ink-3); }
 
-    /* Estado / edición */
-    .two-col { display:grid;grid-template-columns:1fr 1fr;gap:12px; }
-    .trans-list { display:flex;flex-direction:column;gap:6px; }
-    .trans-btn { display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--radius);background:var(--bg-3);border:1px solid var(--line);color:var(--ink-2);font-size:13px;cursor:pointer;transition:all .15s;width:100%; }
-    .trans-btn:hover { border-color:var(--line-2);color:var(--ink);background:var(--bg-1); }
-    .trans-btn:disabled { opacity:.4;cursor:not-allowed; }
-    .trans-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
-    .trans-arrow { margin-left:auto;color:var(--ink-3); }
-    .no-actions { font-size:13px;color:var(--ink-3); }
+    /* Side cards */
+    .side-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; }
+    .side-title { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; margin: 0 0 12px; text-transform: uppercase; font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.08em; }
+    .trans-list { display: flex; flex-direction: column; gap: 4px; }
+    .trans-btn { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: var(--radius); background: var(--bg-3); border: 1px solid var(--line); color: var(--ink-2); font-size: 12.5px; cursor: pointer; transition: all 0.15s; width: 100%; }
+    .trans-btn:hover { border-color: var(--line-2); color: var(--ink); background: var(--bg-2); }
+    .trans-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .trans-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
-    /* Misc */
-    .empty-state { text-align:center;padding:24px;color:var(--ink-3);font-size:13.5px; }
-    .green { color:var(--green) !important; }
-    .amber { color:var(--amber) !important; }
-    .mono { font-family:var(--mono); }
+    .portal-card { background: linear-gradient(135deg, rgba(124,106,247,0.08), rgba(124,106,247,0.02)); border-color: rgba(124,106,247,0.2); }
+    .portal-hint { font-size: 12px; color: var(--ink-3); margin-bottom: 10px; line-height: 1.5; }
+    .portal-url { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--line); border-radius: 7px; cursor: pointer; margin-bottom: 8px; transition: border-color 0.15s; }
+    .portal-url:hover { border-color: var(--accent); }
+    .portal-url-text { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+    .portal-copy-icon { color: var(--accent-2); display: flex; }
+    .portal-btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-radius: 8px; background: rgba(124,106,247,0.15); color: var(--accent-2); font-size: 12.5px; text-decoration: none; font-weight: 500; transition: background 0.15s; }
+    .portal-btn:hover { background: rgba(124,106,247,0.25); }
+
+    .info-rows { display: flex; flex-direction: column; }
+    .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .info-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .info-k { font-size: 11.5px; color: var(--ink-3); }
+    .info-v { font-size: 12.5px; color: var(--ink-2); font-weight: 500; }
+    .info-v.mono { font-family: var(--mono); font-size: 12px; }
+    /* Presupuesto */
+    .btn-pdf {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 14px; border-radius: var(--radius);
+      background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.25);
+      color: var(--red); font-size: 12.5px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-pdf:hover { background: rgba(248,113,113,0.2); }
+    .btn-pdf:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .budget-table { width: 100%; border-collapse: collapse; }
+    .budget-table th {
+      padding: 9px 12px; text-align: left;
+      font-size: 11px; font-weight: 600; color: var(--ink-3);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--line);
+    }
+    .budget-table th.r { text-align: right; }
+    .budget-table td {
+      padding: 11px 12px; border-bottom: 1px solid var(--line);
+      font-size: 13.5px; color: var(--ink-2);
+    }
+    .budget-table tbody tr:last-child td { border-bottom: 2px solid var(--line-2); }
+    .budget-table tfoot td { padding: 12px; }
+    .total-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+    .total-val { font-family: var(--mono); font-size: 1.1rem; font-weight: 700; color: var(--green); text-align: right; }
+    .budget-table .r { text-align: right; }
+    .budget-table .mono { font-family: var(--mono); font-size: 12.5px; }
+    .budget-table .green { color: var(--green); font-weight: 500; }
+
   `]
 })
 export class ProyectoDetailComponent implements OnInit {
-  private route  = inject(ActivatedRoute);
-  private router = inject(Router);
-  private fb     = inject(FormBuilder);
+  private route = inject(ActivatedRoute);
   svc     = inject(ProyectoService);
   pagoSvc = inject(PagoService);
   entSvc  = inject(EntregableService);
   horaSvc = inject(HoraService);
+  actSvc  = inject(ActividadService);
+  toast   = inject(ToastService);
+  private fb = inject(FormBuilder);
 
-  META       = META;
-  TRANS      = TRANS;
-  CATEGORIAS = CATEGORIAS;
-  catKeys    = Object.keys(CATEGORIAS) as CategoriaHora[];
+  META             = META;
+  TRANS            = TRANS;
+  CATEGORIAS       = CATEGORIAS;
+  TIPO_ICON        = TIPO_ICON;
+  TIPO_COLOR       = TIPO_COLOR;
+  ACTIVIDAD_ICON   = ACTIVIDAD_ICON;
+  categoriasKeys   = Object.keys(CATEGORIAS) as (keyof typeof CATEGORIAS)[];
 
   proyecto      = signal<Proyecto | null>(null);
-  activeTab     = signal('pagos');
-  copied        = signal(false);
-  items         = signal<ItemPresupuesto[]>([]);
-
+  tabActivo     = signal<'pagos'|'entregables'|'horas'|'actividad'|'presupuesto'>('pagos');
   showPagoForm  = signal(false);
   showEntForm   = signal(false);
   showHoraForm  = signal(false);
-
   savingPago    = signal(false);
   savingEnt     = signal(false);
   savingHora    = signal(false);
-  savingEdit    = signal(false);
-  transitioning = signal(false);
-
-  pagoErr  = signal('');
-  entErr   = signal('');
-  horaErr  = signal('');
-  editErr  = signal('');
+  transitioning      = signal(false);
+  copiado            = signal(false);
+  savingPresupuesto  = signal(false);
+  generandoPDF       = signal(false);
 
   tabs = [
-    { id: 'pagos',        label: 'Pagos'         },
-    { id: 'entregables',  label: 'Entregables'   },
-    { id: 'horas',        label: 'Horas'         },
-    { id: 'presupuesto',  label: 'Presupuesto'   },
-    { id: 'estado',       label: 'Estado / Editar'},
+    { id: 'pagos'       as const, label: 'Pagos',        count: () => this.pagoSvc.pagos().length },
+    { id: 'entregables' as const, label: 'Entregables',  count: () => this.entSvc.entregables().length },
+    { id: 'horas'       as const, label: 'Horas',        count: () => this.horaSvc.horas().length },
+    { id: 'actividad'   as const, label: 'Actividad',    count: () => this.actSvc.actividades().length },
+    { id: 'presupuesto' as const, label: 'Presupuesto',  count: () => this.proyecto()?.items_presupuesto?.length ?? 0 },
   ];
 
   pagoForm = this.fb.group({
-    monto: [null as number|null, [Validators.required, Validators.min(1)]],
+    monto: [null as number | null, [Validators.required, Validators.min(1)]],
     fecha: [new Date().toISOString().split('T')[0]],
     nota:  [''],
   });
 
   entForm = this.fb.group({
-    tipo:   ['drive'],
     nombre: ['', Validators.required],
     url:    ['', Validators.required],
+    tipo:   ['link'],
+  });
+
+  itemForm = this.fb.group({
+    descripcion: ['', Validators.required],
+    cantidad:    [1, [Validators.required, Validators.min(1)]],
+    precio_unitario: [0, [Validators.required, Validators.min(0)]],
   });
 
   horaForm = this.fb.group({
     categoria:   ['diseno'],
-    cantidad:    [null as number|null, [Validators.required, Validators.min(0.5)]],
-    fecha:       [new Date().toISOString().split('T')[0]],
+    cantidad:    [null as number | null, [Validators.required, Validators.min(0.5)]],
     descripcion: [''],
+    fecha:       [new Date().toISOString().split('T')[0]],
   });
 
-  editForm = this.fb.group({
-    nombre:        ['', Validators.required],
-    presupuesto:   [0],
-    fecha_entrega: [''],
-    descripcion:   [''],
-  });
-
-  get id() { return this.route.snapshot.paramMap.get('id')!; }
-
-  pct        = computed(() => {
+  pct = computed(() => {
     const p = this.proyecto();
     if (!p || !p.presupuesto) return 0;
     return Math.min(100, Math.round((p.monto_cobrado / p.presupuesto) * 100));
   });
-  pendiente  = computed(() => {
+
+  pendiente = computed(() => {
     const p = this.proyecto();
     return p ? Math.max(0, p.presupuesto - p.monto_cobrado) : 0;
   });
+
   rentabilidad = computed(() => {
     const p = this.proyecto();
-    const h = this.horaSvc.totalHoras();
-    if (!p || h === 0) return 0;
-    return Math.round(p.monto_cobrado / h);
+    const horas = this.horaSvc.totalHoras();
+    if (!p || !horas) return 0;
+    return Math.round(p.monto_cobrado / horas);
   });
-  subtotal = computed(() =>
-    this.items().reduce((acc, i) => acc + (i.cantidad * i.precio_unitario), 0)
-  );
+
+  portalUrl = computed(() => {
+    const token = this.proyecto()?.token_publico;
+    return token ? `${window.location.origin}/p/${token}` : '';
+  });
+
+  get id() { return this.route.snapshot.paramMap.get('id')!; }
 
   async ngOnInit() {
     await this.svc.loadAll();
-    const p = this.svc.proyectos().find(p => p.id === this.id) ?? null;
-    this.proyecto.set(p);
-    if (p) {
-      this.editForm.patchValue({
-        nombre: p.nombre, presupuesto: p.presupuesto,
-        fecha_entrega: p.fecha_entrega ?? '', descripcion: p.descripcion ?? '',
-      });
-      this.items.set(p.items_presupuesto ?? []);
-    }
+    this.proyecto.set(this.svc.proyectos().find(p => p.id === this.id) ?? null);
     await Promise.all([
       this.pagoSvc.loadByProyecto(this.id),
       this.entSvc.loadByProyecto(this.id),
       this.horaSvc.loadByProyecto(this.id),
+      this.actSvc.loadByProyecto(this.id),
     ]);
   }
 
   async registrarPago() {
     if (this.pagoForm.invalid) return;
-    this.savingPago.set(true); this.pagoErr.set('');
+    this.savingPago.set(true);
     try {
-      await this.pagoSvc.registrar({ ...this.pagoForm.value as any, proyecto_id: this.id });
-      await this.reloadProyecto();
+      const pago = await this.pagoSvc.registrar({ ...this.pagoForm.value as any, proyecto_id: this.id });
+      await this.svc.loadAll();
+      this.proyecto.set(this.svc.proyectos().find(p => p.id === this.id) ?? null);
+      // Registrar actividad
+      await this.actSvc.registrar(this.id, 'pago_registrado',
+        `Pago registrado: ${this.fmt(this.pagoForm.value.monto!)}`,
+        { monto: this.pagoForm.value.monto }
+      );
       this.pagoForm.patchValue({ monto: null, nota: '' });
       this.showPagoForm.set(false);
-    } catch (e: any) { this.pagoErr.set(e.message); }
-    finally { this.savingPago.set(false); }
+      this.toast.success('Pago registrado correctamente');
+    } catch (e: any) {
+      this.toast.error(e.message ?? 'Error al registrar el pago');
+    } finally { this.savingPago.set(false); }
   }
 
-  async deletePago(id: string) {
-    if (!confirm('¿Eliminar pago?')) return;
-    await this.pagoSvc.delete(id);
-    await this.reloadProyecto();
+  async eliminarPago(pagoId: string) {
+    if (!confirm('¿Eliminar este pago?')) return;
+    await this.pagoSvc.delete(pagoId);
+    await this.svc.loadAll();
+    this.proyecto.set(this.svc.proyectos().find(p => p.id === this.id) ?? null);
+    await this.actSvc.registrar(this.id, 'pago_eliminado', 'Pago eliminado');
+    this.toast.warning('Pago eliminado');
   }
 
-  async crearEntregable() {
+  async agregarEntregable() {
     if (this.entForm.invalid) return;
-    this.savingEnt.set(true); this.entErr.set('');
+    this.savingEnt.set(true);
     try {
-      await this.entSvc.create({ ...this.entForm.value as any, proyecto_id: this.id });
-      this.entForm.patchValue({ nombre: '', url: '' });
+      const e = await this.entSvc.create({ ...this.entForm.value as any, proyecto_id: this.id });
+      await this.actSvc.registrar(this.id, 'entregable_agregado',
+        `Entregable agregado: ${e.nombre}`,
+        { tipo: e.tipo, url: e.url }
+      );
+      this.entForm.reset({ tipo: 'link' });
       this.showEntForm.set(false);
-    } catch (e: any) { this.entErr.set(e.message); }
-    finally { this.savingEnt.set(false); }
+      this.toast.success('Entregable agregado');
+    } catch (e: any) {
+      this.toast.error(e.message ?? 'Error');
+    } finally { this.savingEnt.set(false); }
   }
 
-  async deleteEnt(id: string) {
-    if (!confirm('¿Eliminar entregable?')) return;
+  async eliminarEntregable(id: string) {
+    if (!confirm('¿Eliminar este entregable?')) return;
     await this.entSvc.delete(id);
+    await this.actSvc.registrar(this.id, 'entregable_eliminado', 'Entregable eliminado');
+    this.toast.warning('Entregable eliminado');
   }
 
-  async crearHora() {
+  async registrarHora() {
     if (this.horaForm.invalid) return;
-    this.savingHora.set(true); this.horaErr.set('');
+    this.savingHora.set(true);
     try {
-      await this.horaSvc.create({ ...this.horaForm.value as any, proyecto_id: this.id });
+      const h = await this.horaSvc.create({ ...this.horaForm.value as any, proyecto_id: this.id });
+      await this.actSvc.registrar(this.id, 'hora_registrada',
+        `${h.cantidad}h de ${CATEGORIAS[h.categoria as keyof typeof CATEGORIAS]?.label ?? h.categoria} registradas`,
+        { cantidad: h.cantidad, categoria: h.categoria }
+      );
       this.horaForm.patchValue({ cantidad: null, descripcion: '' });
       this.showHoraForm.set(false);
-    } catch (e: any) { this.horaErr.set(e.message); }
-    finally { this.savingHora.set(false); }
+      this.toast.success(`${h.cantidad}h registradas`);
+    } catch (e: any) {
+      this.toast.error(e.message ?? 'Error');
+    } finally { this.savingHora.set(false); }
   }
 
-  async deleteHora(id: string) {
-    if (!confirm('¿Eliminar registro de horas?')) return;
+  async eliminarHora(id: string) {
+    if (!confirm('¿Eliminar estas horas?')) return;
     await this.horaSvc.delete(id);
+    this.toast.warning('Horas eliminadas');
   }
 
   async cambiarEstado(estado: EstadoProyecto) {
     this.transitioning.set(true);
-    await this.svc.updateEstado(this.id, estado);
-    await this.reloadProyecto();
-    this.transitioning.set(false);
-  }
-
-  async guardarEdicion() {
-    if (this.editForm.invalid) return;
-    this.savingEdit.set(true); this.editErr.set('');
     try {
-      await this.svc.update(this.id, this.editForm.value as any);
-      await this.reloadProyecto();
-    } catch (e: any) { this.editErr.set(e.message); }
-    finally { this.savingEdit.set(false); }
+      await this.svc.updateEstado(this.id, estado);
+      this.proyecto.set(this.svc.proyectos().find(p => p.id === this.id) ?? null);
+      await this.actSvc.loadByProyecto(this.id);
+      this.toast.success(`Estado cambiado a ${META[estado].label}`);
+    } catch (e: any) {
+      this.toast.error('Error al cambiar el estado');
+    } finally { this.transitioning.set(false); }
   }
 
-  addItem() {
-    this.items.update(l => [...l, { descripcion: '', cantidad: 1, precio_unitario: 0 }]);
-  }
-  removeItem(i: number) {
-    this.items.update(l => l.filter((_, idx) => idx !== i));
-    this.saveItems();
-  }
-  async saveItems() {
-    await this.svc.update(this.id, { items_presupuesto: this.items() as any });
-  }
-
-  async copyPortal() {
-    const p = this.proyecto();
-    if (!p?.token_publico) return;
-    const url = `${window.location.origin}/p/${p.token_publico}`;
+  async copiarPortal() {
+    const url = this.portalUrl();
+    if (!url) return;
     await navigator.clipboard.writeText(url);
-    this.copied.set(true);
-    setTimeout(() => this.copied.set(false), 2000);
+    this.copiado.set(true);
+    this.toast.success('Link del portal copiado');
+    setTimeout(() => this.copiado.set(false), 2000);
+  }
+
+  // ── Presupuesto ────────────────────────────────────────────────────
+  totalItems = computed(() => {
+    const items = this.proyecto()?.items_presupuesto ?? [];
+    return items.reduce((acc, i) => acc + (i.cantidad * i.precio_unitario), 0);
+  });
+
+  async agregarItem() {
+    if (this.itemForm.invalid) { this.itemForm.markAllAsTouched(); return; }
+    const p = this.proyecto();
+    if (!p) return;
+    const items = [...(p.items_presupuesto ?? []), this.itemForm.value as any];
+    await this.svc.update(this.id, { items_presupuesto: items });
+    this.proyecto.set(this.svc.proyectos().find(x => x.id === this.id) ?? null);
+    this.itemForm.reset({ cantidad: 1, precio_unitario: 0 });
+    this.toast.success('Item agregado al presupuesto');
+  }
+
+  async quitarItem(index: number) {
+    const p = this.proyecto();
+    if (!p) return;
+    const items = (p.items_presupuesto ?? []).filter((_, i) => i !== index);
+    await this.svc.update(this.id, { items_presupuesto: items });
+    this.proyecto.set(this.svc.proyectos().find(x => x.id === this.id) ?? null);
+    this.toast.warning('Item eliminado');
   }
 
   generarPDF() {
     const p = this.proyecto();
     if (!p) return;
-    const items = this.items();
-    const html = this.buildPDFHtml(p, items);
+    this.generandoPDF.set(true);
+
+    const items = p.items_presupuesto ?? [];
+    const total = items.reduce((acc, i) => acc + (i.cantidad * i.precio_unitario), 0);
+    const fecha = new Date().toLocaleDateString('es-AR', { day:'numeric', month:'long', year:'numeric' });
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Presupuesto — ${p.nombre}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; color: #111827; padding: 48px; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; border-bottom: 3px solid #1D3461; padding-bottom: 24px; }
+          .agency { font-size: 22px; font-weight: 700; color: #1D3461; }
+          .agency-sub { font-size: 12px; color: #6B7280; margin-top: 4px; }
+          .doc-info { text-align: right; }
+          .doc-label { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: 0.08em; }
+          .doc-val { font-size: 14px; font-weight: 600; color: #111827; margin-top: 2px; }
+          .proyecto-section { margin-bottom: 32px; }
+          .section-label { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+          .proyecto-nombre { font-size: 20px; font-weight: 700; color: #1D3461; }
+          .proyecto-cliente { font-size: 14px; color: #374151; margin-top: 4px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+          thead { background: #1D3461; }
+          th { padding: 10px 14px; text-align: left; color: white; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; }
+          th:last-child, td:last-child { text-align: right; }
+          td { padding: 11px 14px; border-bottom: 1px solid #E5E7EB; font-size: 13px; color: #374151; }
+          tr:nth-child(even) td { background: #F9FAFB; }
+          .total-row td { background: #EFF6FF; font-weight: 700; color: #1D3461; font-size: 14px; border-top: 2px solid #BFDBFE; border-bottom: none; }
+          .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #E5E7EB; font-size: 11px; color: #9CA3AF; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="agency">APA Marketing</div>
+            <div class="agency-sub">Agencia de Marketing Digital</div>
+          </div>
+          <div class="doc-info">
+            <div class="doc-label">Presupuesto</div>
+            <div class="doc-val">${fecha}</div>
+          </div>
+        </div>
+
+        <div class="proyecto-section">
+          <div class="section-label">Proyecto</div>
+          <div class="proyecto-nombre">${p.nombre}</div>
+          <div class="proyecto-cliente">${p.clientes?.empresa ?? ''} — ${p.clientes?.nombre ?? ''}</div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Descripción</th>
+              <th style="text-align:right">Cant.</th>
+              <th style="text-align:right">Precio unit.</th>
+              <th style="text-align:right">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(i => `
+              <tr>
+                <td>${i.descripcion}</td>
+                <td style="text-align:right">${i.cantidad}</td>
+                <td style="text-align:right">${this.fmt(i.precio_unitario)}</td>
+                <td style="text-align:right">${this.fmt(i.cantidad * i.precio_unitario)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="3">TOTAL</td>
+              <td>${this.fmt(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div class="footer">
+          Presupuesto generado por APA Dashboard · ${fecha}
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Abre en nueva pestaña y dispara la impresión/guardar como PDF
     const win = window.open('', '_blank');
     if (win) {
       win.document.write(html);
       win.document.close();
-      setTimeout(() => win.print(), 500);
+      setTimeout(() => { win.print(); }, 500);
     }
+    this.generandoPDF.set(false);
   }
 
-  private buildPDFHtml(p: Proyecto, items: ItemPresupuesto[]): string {
-    const total = items.reduce((a,i) => a + i.cantidad * i.precio_unitario, 0);
-    const rows = items.map(i => `
-      <tr>
-        <td>${i.descripcion}</td>
-        <td style="text-align:center">${i.cantidad}</td>
-        <td style="text-align:right">${this.fmt(i.precio_unitario)}</td>
-        <td style="text-align:right;font-weight:600">${this.fmt(i.cantidad * i.precio_unitario)}</td>
-      </tr>`).join('');
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-      <title>Presupuesto — ${p.nombre}</title>
-      <style>
-        * { box-sizing:border-box; margin:0; padding:0; }
-        body { font-family:'Helvetica Neue',Arial,sans-serif; color:#111; padding:40px; font-size:13px; }
-        .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:40px; border-bottom:2px solid #7c6af7; padding-bottom:20px; }
-        .agency { font-size:22px; font-weight:700; color:#7c6af7; }
-        .doc-title { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:#999; margin-top:4px; }
-        .client-block h3 { font-size:11px; text-transform:uppercase; color:#999; letter-spacing:.08em; margin-bottom:6px; }
-        .client-block p { font-size:14px; font-weight:600; color:#111; }
-        .client-block span { font-size:12px; color:#666; }
-        .project-info { background:#f8f8ff; border-radius:8px; padding:16px 20px; margin-bottom:24px; display:flex; gap:40px; }
-        .info-item label { font-size:10px; text-transform:uppercase; color:#999; letter-spacing:.08em; display:block; margin-bottom:4px; }
-        .info-item span { font-size:14px; font-weight:500; color:#111; }
-        table { width:100%; border-collapse:collapse; margin-bottom:24px; }
-        thead th { background:#7c6af7; color:white; padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
-        tbody tr:nth-child(even) { background:#f9f9ff; }
-        tbody td { padding:10px 14px; border-bottom:1px solid #eee; }
-        .totals { display:flex; justify-content:flex-end; }
-        .totals-box { width:260px; }
-        .total-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #eee; font-size:13px; color:#555; }
-        .total-final { display:flex; justify-content:space-between; padding:12px 0; font-size:16px; font-weight:700; color:#111; border-top:2px solid #7c6af7; margin-top:4px; }
-        .footer { margin-top:60px; padding-top:20px; border-top:1px solid #eee; font-size:11px; color:#999; text-align:center; }
-        @media print { body { padding:20px; } }
-      </style>
-    </head><body>
-      <div class="header">
-        <div>
-          <div class="agency">APA Marketing</div>
-          <div class="doc-title">Presupuesto de servicios</div>
-        </div>
-        <div class="client-block" style="text-align:right">
-          <h3>Cliente</h3>
-          <p>${p.clientes?.empresa ?? ''}</p>
-          <span>${p.clientes?.nombre ?? ''}</span><br>
-          ${p.clientes?.email ? `<span>${p.clientes.email}</span>` : ''}
-        </div>
-      </div>
-      <div class="project-info">
-        <div class="info-item"><label>Proyecto</label><span>${p.nombre}</span></div>
-        <div class="info-item"><label>Fecha</label><span>${new Date().toLocaleDateString('es-AR')}</span></div>
-        ${p.fecha_entrega ? `<div class="info-item"><label>Entrega estimada</label><span>${this.fd(p.fecha_entrega)}</span></div>` : ''}
-        ${p.descripcion ? `<div class="info-item"><label>Descripción</label><span>${p.descripcion}</span></div>` : ''}
-      </div>
-      <table>
-        <thead><tr><th>Descripción</th><th style="text-align:center">Cant.</th><th style="text-align:right">Precio unitario</th><th style="text-align:right">Subtotal</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:20px">Sin items cargados</td></tr>'}</tbody>
-      </table>
-      <div class="totals"><div class="totals-box">
-        <div class="total-row"><span>Subtotal</span><span>${this.fmt(total)}</span></div>
-        <div class="total-final"><span>Total</span><span style="color:#7c6af7">${this.fmt(total || p.presupuesto)}</span></div>
-      </div></div>
-      <div class="footer">APA Marketing • Presupuesto generado el ${new Date().toLocaleDateString('es-AR')} • Válido por 30 días</div>
-    </body></html>`;
-  }
 
-  private async reloadProyecto() {
-    await this.svc.loadAll();
-    this.proyecto.set(this.svc.proyectos().find(p => p.id === this.id) ?? null);
+  fdRelativo(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins  = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days  = Math.floor(diff / 86400000);
+    if (mins < 1)   return 'Ahora mismo';
+    if (mins < 60)  return `Hace ${mins} min`;
+    if (hours < 24) return `Hace ${hours}h`;
+    if (days < 7)   return `Hace ${days} días`;
+    return this.fd(iso);
   }
-
-  getTipoIcon(tipo: TipoEntregable) { return TIPO_ICONS[tipo]; }
-  getTipoColor(tipo: TipoEntregable) { return TIPO_COLORS[tipo]; }
 
   fmt(n: number) {
     return new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(n);
   }
+
   fd(iso: string) {
     return new Date(iso + 'T00:00').toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric' });
   }
