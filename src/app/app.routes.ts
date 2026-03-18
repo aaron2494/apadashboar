@@ -4,19 +4,26 @@ import { authGuard } from './core/guards/auth.guard';
 export const routes: Routes = [
   { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
 
-  // Portal público del cliente — sin auth guard
+  // Portal público del cliente — sin auth
   {
     path: 'p/:token',
     loadComponent: () => import('./features/portal/portal.component')
       .then(m => m.PortalComponent)
   },
 
+  // Auth — públicas
   {
     path: 'auth/login',
     loadComponent: () => import('./features/auth/login.component')
       .then(m => m.LoginComponent)
   },
+  {
+    path: 'auth/register',
+    loadComponent: () => import('./features/auth/register.component')
+      .then(m => m.RegisterComponent)
+  },
 
+  // App — protegida
   {
     path: '',
     canActivate: [authGuard],
