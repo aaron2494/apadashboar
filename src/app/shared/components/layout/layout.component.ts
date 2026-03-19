@@ -127,6 +127,20 @@ import { SupabaseService } from '../../../core/services/supabase.service';
     /* Override stage bg para dark */
     :host { --stage-bg: #0d0d14; }
     .stage { background: var(--bg); }
+    @media (max-width: 768px) {
+      .rail { width: 60px; padding: 0; }
+      .logo { padding: 16px 8px; }
+      .logo-text { display: none; }
+      .nav { padding: 2px 4px; }
+      .nav-link { justify-content: center; padding: 8px 4px; }
+      .nav-label { display: none; }
+      .nav-icon { opacity: 1; }
+      .rail-bottom { padding: 4px 4px 12px; }
+      .perfil-link { justify-content: center; }
+      .sign-out { justify-content: center; padding: 8px 4px; font-size: 0; }
+      .sign-out svg { margin: 0; }
+    }
+
   `]
 })
 export class LayoutComponent {
